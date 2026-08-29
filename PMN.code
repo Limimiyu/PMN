@@ -1,0 +1,419 @@
+library(Seurat)
+library(monocle)
+library(harmony)
+library(celldex)
+library(dplyr)
+library(RColorBrewer)
+library(ggrepel)
+library(scales)
+library(ggpubr)
+library(msigdbr)
+library(AUCell)
+library(irGSEA)
+library(UCell)
+library(GSVA)
+library(pheatmap)
+library(cowplot)
+library(CellChat)
+library(slingshot)
+library(aplot)
+library(forcats)
+library(tidydr)
+library(magrittr)
+library(RColorBrewer)
+library(NMF)
+library(ggalluvial)
+library(psych)
+library(qgraph)
+library(igraph)
+library(clusterProfiler)
+library(SCENIC)
+library(GENIE3)
+library(RcisTarget)
+library(SCopeLoomR)
+library(patchwork)
+library(ggplot2) 
+library(stringr)
+library(circlize)
+library(ggrepel)
+library(tibble)
+library(tidydr)
+GO_database <- 'org.Hs.eg.db'
+colors = c( '#1F78B4', '#FFFFB3', '#E31A1C')
+cols <- hue_pal()((20))
+colour=c("#DC143C","#0000FF","#20B2AA","#FFA500","#9370DB","#98FB98","#1E90FF","#7CFC00","#FFFF00","#808000","#FF00FF","#FA8072","#7B68EE","#9400D3","#800080","#A0522D","#D2B48C","#D2691E","#87CEEB","#40E0D0","#5F9EA0","#FF1493","#0000CD","#008B8B","#FFE4B5","#8A2BE2","#228B22","#E9967A","#4682B4","#32CD32","#F0E68C","#FFFFE0","#EE82EE","#FF6347","#6A5ACD","#9932CC","#8B008B","#8B4513","#DEB887")
+col <- c("#F08080","#1E90FF","#7CFC00","#FFFF00","#808000","#FF00FF","#D2B48C","#7B68EE","#DC143C","#800080","#A0522D","#D2691E","#87CEEB","#40E0D0")
+
+
+#Figure 1A: Sample integrated
+assays <- c("HC1","HC2", "HC3","MN1","MN2", "MN3","MN4","MN5")
+dir=paste0("data5/practice/HE/",assays)
+samples_names=c("HC1","HC2", "HC3","MN1","MN2", "MN3","MN4","MN5")
+scRNAlist <- list()
+PMN.function <- function(sample_dir, sample_name, group) {
+  counts <- Read10X(data.dir = sample_dir)
+  scRNA <- CreateSeuratObject(counts, project = sample_name, min.cells = 3, min.features = 200)
+  scRNA <- RenameCells(scRNA, add.cell.id = sample_name)
+  scRNA[["percent.mt"]] <- PercentageFeatureSet(scRNA, pattern = "^MT-")
+  scRNA <- subset(scRNA, nFeature_RNA > 600 & nFeature_RNA < 5000 & percent.mt < 20)
+  scRNA$group <- group
+  return(scRNA)
+}
+
+VlnPlot(PMN, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size = 0 )
+
+for (i in 1:length(dir)) {
+  group <- ifelse(i <= 3, "healthy", "PMN")
+  scRNAlist[[i]] <- PMN.function(dir[i], samples_names[i], group)
+}
+
+PMN.list <- lapply(X = scRNAlist, FUN = function(x) {
+       x <- NormalizeData(x)
+       x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+   })
+
+features <- SelectIntegrationFeatures(object.list = PMN.list)
+anchors <- FindIntegrationAnchors(object.list = PMN.list, anchor.features = features)
+PMN <- IntegrateData(anchorset = anchors)
+DefaultAssay(PMN) <- "integrated"
+PMN <- ScaleData(PMN, verbose = FALSE)
+PMN <- RunPCA(PMN, npcs = 30, verbose = FALSE)
+ElbowPlot(PMN,ndims = 20)
+PMN <- RunUMAP(PMN, reduction = "pca", dims = 1:15)
+PMN <- FindNeighbors(PMN, dims = 1:15)
+PMN <- FindClusters(PMN, resolution = 0.4)
+DefaultAssay(PMN) <- "RNA"
+DimPlot(PMN,reduction = "umap",label = TRUE)
+DimPlot(PMN,reduction = "umap",group.by = "orig.ident")
+DefaultAssay(PMN) <- "RNA"
+PMN <- RenameIdents(PMN,"0"="CD4+ T cell","1"="CD4+ T cell","3"="CD8+ T cell", "4"="γδT","8"="CD8+ T cell","19"="CD4+ T cell","5"="B","9"="B","12"= "B","6"="NK", "7"="NK","2"="Mono","13"="Mono","16"="Mono","10"="CD14- Mono","14"="cDC","17"="pDC","15"="MKI67+ cell","11"="PLT","18"="Neu")
+
+
+##Figure S1B: Validate the batch - effect correction
+embedding <- Embeddings(PMN, reduction = "pca")  
+embedding_pca <- Embeddings(PMN, reduction = "pca")[, 1:10]
+lisi_scores <- compute_lisi(
+  X = embedding_pca,                
+  meta_data = PMN@meta.data,      
+  label_colnames = c("orig.ident", "celltype"), 
+  perplexity = 30                  
+)
+PMN@meta.data$iLISI <- lisi_scores$bLISI
+PMN@meta.data$cLISI <- lisi_scores$cell_type_LISI
+meta <- PMN@meta.data
+p1 <- ggplot(meta,aes(x=orig.ident,y=iLISI,fill=orig.ident))+geom_boxplot(outlier.shape = NA)+theme_classic()+theme(axis.text = element_text(size = 8,colour = "black"))+NoLegend()
+p2 <- ggplot(meta,aes(x=orig.ident,y=cLISI,fill=orig.ident))+geom_boxplot(outlier.shape = NA)+theme_classic()+theme(axis.text = element_text(size = 8,colour = "black"))+NoLegend()
+(p1+p2)
+
+
+##Figure 1C - D: Abundance difference in samples and groups
+prop.table(table(Idents(PMN)))
+table(Idents(PMN), PMN$orig.ident)#各组不同细胞群细胞数
+Cellratio <- prop.table(table(Idents(PMN), PMN$orig.ident), margin = 2)#计算各组样本不同细胞群比例
+Cellratio <- data.frame(Cellratio)
+Cellratio$Var2 <- as.character(Cellratio$Var2)
+Cellratio$Var2 <- as.factor(Cellratio$Var2)
+colnames(Cellratio)[1] <- "Celltype"
+
+ggplot(Cellratio)+
+  geom_boxplot(aes(x = factor(Var2,levels=c("HC1","HC2","HC3","MN1","MN2","MN3","MN4","MN5")),y=Freq,fill=Celltype),stat = "identity",width = 0.8,show.legend = TRUE,position = "stack",color="black")+
+  theme_classic()+
+  xlab(label = "sample")+
+  ylab(label = "Freq")+
+  scale_fill_manual(values = cols)+
+  guides(guide_legend(override.aes = list(size=50)))+
+  theme(legend.text = element_text(face = "bold",colour = "#222222",size = 18))+
+  theme(axis.title.x = element_text(size = 15,face = "bold",color="#222222" ))+
+  theme(axis.text.x = element_text(size = 15,face = "bold",color = "#222222",angle = 45,hjust = 1,vjust = 1))+
+  theme(axis.title.y = element_text(face = "bold",size = 15,color ="#222222" ))+
+  theme(axis.text.y = element_text(face = "bold",size = 18,colour = "#222222"))+
+  theme(title  = element_text(size = 15,face = "bold",colour = "#222222"))
+
+
+library(reshape2)
+cellper <- dcast(Cellratio,Var2~Celltype, value.var = "Freq")#长数据转为宽数据
+rownames(cellper) <- cellper[,1]
+cellper <- cellper[,-1]
+sample <- c("HC1","HC2","MN1","MN2","MN3","MN4","MN5","HC3")
+group <- c("healthy","healthy","PMN","PMN","PMN","PMN","PMN","healthy")
+samples <- data.frame(sample, group)
+rownames(samples)=samples$sample
+cellper$sample <- samples[rownames(cellper),'sample']
+cellper$group <- samples[rownames(cellper),'group']
+cellper.1 <- melt(cellper,id=c("sample","group"))
+colnames(cellper.1)[3] <- "celltype"
+colnames(cellper.1)[4] <- "percentage"
+ggplot(cellper.1, aes(x = celltype, y = percentage, fill = group)) +
+  geom_boxplot(shape = 21, aes(fill = group), width = 0.5, position = position_dodge(0.8)) +
+  scale_y_sqrt() +
+  theme_cowplot() +
+  theme(axis.text = element_text(size = 13), axis.title = element_text(size = 15), 
+        legend.text = element_text(size = 13), legend.title = element_text(size = 15),
+        plot.title = element_text(size = 15, face = 'plain'),
+        axis.text.y = element_text(size = 13),
+        axis.title.y = element_text(size = 15, face = "bold"),
+        axis.title.x = element_text(size = 15, face = "bold"),
+        axis.text.x = element_text(size = 13, angle = 45, hjust = 1, vjust = 1),legend.position = "top") +
+  stat_compare_means(method = "wilcox.test", label = "p.signif", hide.ns = TRUE, size = 8) +
+  scale_fill_manual(values = c('#6699CC', "#CC3333"))
+
+
+##95%confidence calculation
+median_diff <- function(data, indices) {
+  d <- data[indices, ]
+  pmn_med <- median(d$percentage[d$group == "PMN"])
+  hc_med <- median(d$percentage[d$group == "healthy"])
+  return(pmn_med - hc_med)
+}
+PMN.result <- cellper.1 %>%
+  group_by(celltype) %>%
+  do({
+    dat <- .
+    diff_obs <- median(dat$percentage[dat$group == "PMN"]) -
+      median(dat$percentage[dat$group == "healthy"])
+    boot_res <- boot(dat, statistic = median_diff, R = 1000)
+    ci <- boot.ci(boot_res, type = "perc")$percent[4:5]  # 95% 百分位 CI
+    data.frame(
+      celltype = unique(dat$celltype),
+      median_diff = diff_obs,
+      CI_lower = ci[1],
+      CI_upper = ci[2],
+      p_value = t.test(percentage ~ group, data = dat)$p.value
+    )
+  }) %>%
+  ungroup()
+print(PMN.result)
+
+
+
+##Figure S1D: Gene expression heatmap
+marker.plot <- c("CD3E","CD4","CD8A","CD8B","CD79A","NKG7","GNLY","FCN1","FCGR3A","CLEC10A","FCER1A","IRF8","LILRA4","MKI67","PPBP","DEFA4")
+data.features <- FetchData(PMN, cells = colnames(PMN), vars = marker.plot, slot = "data")
+p <- DotPlot(PMN,features = marker.plot)
+dotplot_data<-p$data
+heatmap_data<-dotplot_data%>%
+  select(features.plot,id,avg.exp.scaled)%>%
+  pivot_wider(names_from=features.plot,values_from=avg.exp.scaled)
+heatmap_data=column_to_rownames(heatmap_data,var="id")
+pheatmap(heatmap_data,
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="RdBu")))(100),show_rownames = TRUE,
+         show_colnames = TRUE,
+         cluster_rows = F,cluster_cols = F,
+         scale = "column" ,cellheight = 10,cellwidth = 10,fontsize = 10, border_color = "white")
+
+
+
+
+##Figure 2D: Functional score
+cells_rankings <- AUCell_buildRankings(B@assays$RNA@data,plotStats = FALSE)
+cells_AUC.CSR <- AUCell_calcAUC(CSR, cells_rankings,aucMaxRank=nrow(cells_rankings)*0.1)
+cells_AUC.CSR <- as.numeric(getAUC(cells_AUC.CSR))
+B$CSR <- cells_AUC.CSR
+meta.B <- B@meta.data
+B.score.sub <- meta.B%>%group_by(celltype)%>%dplyr::summarise_each(funs = mean)
+B.score.sub$CSR <- as.numeric(B.score.sub$CSR)
+B.score.sub$above_average <- B.score.sub$CSR > median(B.score.sub$CSR)
+ggplot(B.score.sub)+geom_bar(aes(x = CSR, y = celltype, fill = above_average), stat = "identity", width = 0.8,show.legend = FALSE) +scale_fill_manual(values = c("FALSE" = "grey", "TRUE" = "blue")) + geom_vline(aes(xintercept = median(chemokine)), linetype = "dashed") + theme_classic()+theme(axis.text.y = element_blank(),axis.title.y = element_blank())+theme(axis.title.x = element_text(size = 20))
+
+
+
+###monocle3
+Idents(Mono) <- Mono$site
+Mono <- subset(Mono,idents="tumor")
+Idents(Mono) <- Mono$cell.type
+mat <- GetAssayData(Mono, slot = "data")
+cellInfo <- Mono@meta.data
+geneInfo <- data.frame(gene_short_name = rownames(mat), row.names = rownames(mat))
+cds <- new_cell_data_set(expression_data = mat,
+                         cell_metadata = cellInfo,
+                         gene_metadata = geneInfo)
+cds <- preprocess_cds(cds, num_dim = 50)
+reducedDim(cds, "UMAP") <- Embeddings(Mono, "umap")
+cds = cluster_cells(cds, cluster_method = 'leiden',k = 20,reduction_method = "UMAP",resolution = 0.00001)
+cds = learn_graph(cds, use_partition=T, verbose=T, learn_graph_control=list(
+  minimal_branch_len=30
+))
+
+start = c("Mono_CD14_DLEU2")
+closest_vertex = cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+closest_vertex = as.matrix(closest_vertex[colnames(cds), ])
+root_pr_nodes = igraph::V(principal_graph(cds)[["UMAP"]])$name
+
+flag = closest_vertex[as.character(colData(cds)$cell.type) %in% start,]
+flag = as.numeric(names(which.max(table( flag ))))
+root_pr_nodes = root_pr_nodes[flag]
+cds = order_cells(cds, root_pr_nodes=root_pr_nodes)
+p = plot_cells(cds,
+               color_cells_by = "pseudotime",
+               label_cell_groups=F,
+               label_groups_by_cluster=F,
+               label_roots=F,
+               label_leaves=F,
+               label_branch_points=F,
+               cell_size=0.5,
+               group_label_size=7,
+               rasterize=F)
+
+
+##pyscenic
+  loom <- open_loom('out_SCENIC.loom') 
+  regulons_incidMat <- get_regulons(loom, column.attr.name="Regulons")
+  regulons <- regulonsToGeneLists(regulons_incidMat)
+  regulonAUC <- get_regulons_AUC(loom,column.attr.name='RegulonsAUC')
+  regulonAucThresholds <- get_regulon_thresholds(loom)
+  tail(regulonAucThresholds[order(as.numeric(names(regulonAucThresholds)))])
+  embeddings <- get_embeddings(loom)  
+  close_loom(loom)
+  sub_regulonAUC <- regulonAUC[,match(colnames(B),colnames(regulonAUC))]
+  dim(sub_regulonAUC)
+  identical(colnames(sub_regulonAUC), colnames(B))  
+  cellClusters <- data.frame(row.names = colnames(B),seurat_clusters = as.character(B$celltype))
+  cellTypes <- data.frame(row.names = colnames(B),celltype = B$celltype)
+  head(cellTypes)
+  head(cellClusters)
+  sub_regulonAUC[1:4,1:4]
+  selectedResolution <- "celltype"
+  cellsPerGroup <- split(rownames(cellTypes),cellTypes[,selectedResolution])
+  sub_regulonAUC <- sub_regulonAUC[onlyNonDuplicatedExtended(rownames(sub_regulonAUC)),] 
+  dim(sub_regulonAUC)
+  regulonActivity_byGroup <- sapply(cellsPerGroup,function(cells) rowMeans(getAUC(sub_regulonAUC)[,cells]))
+  regulonActivity_byGroup_Scaled <- t(scale(t(regulonActivity_byGroup),center = T, scale=T)) 
+  dim(regulonActivity_byGroup_Scaled)
+  regulonActivity_byGroup_Scaled=na.omit(regulonActivity_byGroup_Scaled)
+  
+B_rss <- as.data.frame(rss)
+celltype <- c("DN1 B cells")
+rssRanklist <- list()
+for(i in 1:length(celltype)) {
+  
+  data_rank_plot <- cbind(as.data.frame(rownames(regulonActivity_byGroup_Scaled)),
+                          as.data.frame(regulonActivity_byGroup_Scaled[,celltype[i]]))
+  colnames(data_rank_plot) <- c("TF", "celltype")
+  data_rank_plot=na.omit(data_rank_plot)
+  data_rank_plot <- data_rank_plot[order(data_rank_plot$celltype,decreasing=T),]
+  data_rank_plot$rank <- seq(1, nrow(data_rank_plot))
+  p <- ggplot(data_rank_plot, aes(x=rank, y=celltype)) + 
+    geom_point(size=3, shape=16, color="#1F77B4",alpha =0.4)+
+    geom_point(data = data_rank_plot[1:6,],
+               size=3, color='#DC050C')+ #选择前6个标记，自行按照需求选择
+    theme_bw()+
+    theme(axis.title = element_text(colour = 'black', size = 20),
+          axis.text = element_text(colour = 'black', size = 10),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),title = element_text(size = 20))+
+    labs(x='Regulons Rank', y='Specificity Score',title =celltype[i])+
+    geom_text_repel(data= data_rank_plot[1:6,],
+                    aes(label=TF), color="black", size=10, fontface="italic", 
+                    arrow = arrow(ends="first", length = unit(0.01, "npc")), box.padding = 1,
+                    point.padding = 1, segment.color = 'black', 
+                    segment.size = 1, force = 1, max.iter = 3e3,max.overlaps = Inf)
+  rssRanklist[[i]] <- p
+}
+plot_grid(rssRanklist[[1]])
+
+
+
+##umap
+CD4[['cellType']] = CD4@active.ident
+umap = CD4@reductions$umap@cell.embeddings %>%  
+  as.data.frame() %>% 
+  cbind(cellType = CD4@meta.data$cellType)
+umap$cellType <- as.character(umap$cellType)
+umap$cellType[umap$cellType=="Naive CD4+ T"] <- "1: Naive CD4+ T"
+umap$cellType[umap$cellType=="CD4+ Tcm-1"] <- "2: CD4+ Tcm-1"
+umap$cellType[umap$cellType=="CD4+ Tcm-2"] <- "3: CD4+ Tcm-2"
+umap$cellType[umap$cellType=="CD4+ Tem"] <- "4: CD4+ Tem"
+umap$cellType[umap$cellType=="Th17"] <- "5: Th17"
+umap$cellType[umap$cellType=="RPS26+ CD4+ T"] <- "6: RPS26+ CD4+ T"
+umap$cellType[umap$cellType=="ISG+ CD4+ T"] <- "7: ISG+ CD4+ T"
+umap$cellType[umap$cellType=="Treg"] <- "8: Treg"
+umap$cellType[umap$cellType=="NEAT1+ CD4+ T"] <- "9: NEAT1+ CD4+ T"
+
+umap$cellType <- factor(umap$cellType,levels = c("1: Naive CD4+ T","2: CD4+ Tcm-1","3: CD4+ Tcm-2","4: CD4+ Tem","5: Th17",
+                                                 "6: RPS26+ CD4+ T","7: ISG+ CD4+ T","8: Treg","9: NEAT1+ CD4+ T"))
+cell_type_med <- umap %>%
+  group_by(cellType) %>%
+  summarise(
+    UMAP_1 = median(UMAP_1),
+    UMAP_2 = median(UMAP_2)
+  )
+cell_type_med$ident <- c(1:9)
+Theme2<-theme(title = element_text(size = 14,face = "bold"),
+              panel.background = element_blank(),panel.border = element_blank(),panel.grid=element_blank(), 
+              axis.title = element_text(color='black',size=16),axis.ticks.length = unit(0.4,"lines"),
+              axis.ticks = element_blank(),axis.line = element_blank(),axis.text=element_blank(),
+              legend.title = element_text(size = 14,face = "plain"),legend.text=element_text(size=14),
+              legend.key=element_blank(),legend.key.height=unit(0.5,'cm'),
+              legend.position = "right",aspect.ratio = 1,plot.title = element_text(hjust = 0.5)) 
+ggplot(umap,aes(x=UMAP_1,y=UMAP_2))+geom_point(aes(color=cellType),size=0.5)+scale_color_manual(values = c(colour))+
+  geom_label(aes(label=ident),cell_type_med,nudge_x=0,alpha=0,size=6,label.size = NA)+labs(x=" ",y=" ")+theme_bw()+Theme2+
+  guides(colour = guide_legend(override.aes = list(size=3.5),ncol = 1))+
+  geom_segment(aes(x = min(umap$UMAP_1) , y = min(umap$UMAP_2),xend = min(umap$UMAP_1) +3.5, yend = min(umap$UMAP_2)),colour = "black", size=1,arrow = arrow(length = unit(0.3,"cm")))+ 
+  geom_segment(aes(x = min(umap$UMAP_1),y = min(umap$UMAP_2),xend = min(umap$UMAP_1),yend = min(umap$UMAP_2) + 3.5),colour = "black", size=1,arrow = arrow(length = unit(0.3,"cm")))+
+  annotate("text", x = min(umap$UMAP_1) +2, y = min(umap$UMAP_2) -1, label = "UMAP_1",color="black",size = 4, fontface="bold" ) +
+  annotate("text", x = min(umap$UMAP_1) -1, y = min(umap$UMAP_2) + 2, label = "UMAP_2",color="black",size = 4, fontface="bold" ,angle=90)+
+  ggtitle("CD4")
+
+
+###cellphonedb
+write.table(as.matrix(PMN3k@assays$RNA@data), 'cellphonedb_count.txt', sep='\t', quote=F) 
+meta_data <- cbind(rownames(PMN3k@meta.data), PMN3k@meta.data[,'celltype', drop=F]) 
+meta_data <- as.matrix(meta_data) 
+meta_data[is.na(meta_data)] = "Unkown" 
+write.table(meta_data, 'cellphonedb_meta.txt', sep='\t', quote=F, row.names=F)
+all_pval = read.table("pvalues.txt", header=T, stringsAsFactors = F, sep='\t', comment.char = '', check.names=F)
+all_means = read.table('means.txt', header=T, stringsAsFactors = F, sep='\t', comment.char = '', check.names=F)
+intr_pairs = all_pval$interacting_pair
+all_pval = all_pval[,-c(1,3:11)]
+all_means = all_means[,-c(1,3:11)]
+selected_celltype = c("CD4+ T|CD8+ Temra-2","B|CD8+ Temra-2","Plasma cell|CD8+ Temra-2", "Mono|CD8+ Temra-2","cDC|CD8+ Temra-2","pDC|CD8+ Temra-2","Neu|CD8+ Temra-2")
+sig_pairs <- all_pval
+sig_pairs <- sig_pairs[which(rowSums(sig_pairs<=0.05)!=0), ]
+View(sig_pairs)
+sub_sig_pairs <- sig_pairs
+dim(sub_sig_pairs)
+selected_pairs = sub_sig_pairs$interacting_pair
+sel_pval = all_pval[match(selected_pairs, intr_pairs), selected_celltype]#将上述需要呈现的受配体选出来
+sel_means = all_means[match(selected_pairs, intr_pairs), selected_celltype]
+View(sel_pval)
+df_names = expand.grid(selected_pairs, selected_celltype)
+pval = unlist(sel_pval)
+pval[pval==0] = 0.00001
+plot.data = cbind(df_names,pval)
+pr = unlist(as.data.frame(sel_means))
+plot.data = cbind(plot.data,pr)
+colnames(plot.data) = c('pair', 'clusters', 'pvalue', 'mean')
+plot.data$clusters <- gsub('[|]', '_', plot.data$clusters)
+my_palette <- colorRampPalette(c("darkblue","yellow","red"))(n=1000)
+selected_pairs <- c("BTLA_TNFRSF14", "ICAM1_SPN", "ICAM1_ITGAL", "CD99_PILRA","CD40_CD40LG")
+
+plot.data1 <- plot.data[plot.data$pair %in% selected_pairs, ]
+ggplot(plot.data1, aes(x=clusters, y=pair)) +
+  geom_point(aes(size=-log10(pvalue + 0.001), color=mean)) +
+  scale_size_continuous(range=c(3, 7), breaks=c(0, 1.0, 2.0)) + 
+  scale_color_gradientn('Mean expression', colors=my_palette, limits=c(0.3, 1.5), na.value="transparent") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=10, colour="black"),
+        axis.text.x = element_text(angle=90, hjust=1, vjust=0, size=10),
+        axis.text.y = element_text(size=10, colour="black"),
+        axis.title=element_blank(),
+        panel.border = element_rect(size=0.7, linetype="solid", colour="black"))
+all_means <-  read.delim("CD8.merge.cellphonedb/means.txt", check.names = FALSE)
+all_pval <-  read.delim("CD8.merge.cellphonedb/pvalues.txt", check.names = FALSE)
+plot_cpdb4(
+  scdata = CD8.merge,interaction = "BTLA-TNFRSF14",
+  cell_type1 = ".",
+  cell_type2 = "CD8+ Temra-2",
+  celltype_key = "celltype", # column name where the cell ids are located in the metadata
+  means = all_means,
+  pvals = all_pval,
+  deconvoluted = decon_stat,desiredInteractions = list(c("pDC","CD8+ Temra-2"),c("pDC","CD4+ T"))
+)
+
+
+
+
+
+
