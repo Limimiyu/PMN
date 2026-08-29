@@ -45,7 +45,7 @@ colour=c("#DC143C","#0000FF","#20B2AA","#FFA500","#9370DB","#98FB98","#1E90FF","
 col <- c("#F08080","#1E90FF","#7CFC00","#FFFF00","#808000","#FF00FF","#D2B48C","#7B68EE","#DC143C","#800080","#A0522D","#D2691E","#87CEEB","#40E0D0")
 
 
-#Figure 1A: Sample integrated
+#Sample integrated
 assays <- c("HC1","HC2", "HC3","MN1","MN2", "MN3","MN4","MN5")
 dir=paste0("data5/practice/HE/",assays)
 samples_names=c("HC1","HC2", "HC3","MN1","MN2", "MN3","MN4","MN5")
@@ -89,7 +89,7 @@ DefaultAssay(PMN) <- "RNA"
 PMN <- RenameIdents(PMN,"0"="CD4+ T cell","1"="CD4+ T cell","3"="CD8+ T cell", "4"="γδT","8"="CD8+ T cell","19"="CD4+ T cell","5"="B","9"="B","12"= "B","6"="NK", "7"="NK","2"="Mono","13"="Mono","16"="Mono","10"="CD14- Mono","14"="cDC","17"="pDC","15"="MKI67+ cell","11"="PLT","18"="Neu")
 
 
-##Figure S1B: Validate the batch - effect correction
+##Validate the batch - effect correction
 embedding <- Embeddings(PMN, reduction = "pca")  
 embedding_pca <- Embeddings(PMN, reduction = "pca")[, 1:10]
 lisi_scores <- compute_lisi(
@@ -106,15 +106,14 @@ p2 <- ggplot(meta,aes(x=orig.ident,y=cLISI,fill=orig.ident))+geom_boxplot(outlie
 (p1+p2)
 
 
-##Figure 1C - D: Abundance difference in samples and groups
+##Abundance difference in samples and groups
 prop.table(table(Idents(PMN)))
-table(Idents(PMN), PMN$orig.ident)#各组不同细胞群细胞数
-Cellratio <- prop.table(table(Idents(PMN), PMN$orig.ident), margin = 2)#计算各组样本不同细胞群比例
+table(Idents(PMN), PMN$orig.ident)
+Cellratio <- prop.table(table(Idents(PMN), PMN$orig.ident), margin = 2)
 Cellratio <- data.frame(Cellratio)
 Cellratio$Var2 <- as.character(Cellratio$Var2)
 Cellratio$Var2 <- as.factor(Cellratio$Var2)
 colnames(Cellratio)[1] <- "Celltype"
-
 ggplot(Cellratio)+
   geom_boxplot(aes(x = factor(Var2,levels=c("HC1","HC2","HC3","MN1","MN2","MN3","MN4","MN5")),y=Freq,fill=Celltype),stat = "identity",width = 0.8,show.legend = TRUE,position = "stack",color="black")+
   theme_classic()+
@@ -131,7 +130,7 @@ ggplot(Cellratio)+
 
 
 library(reshape2)
-cellper <- dcast(Cellratio,Var2~Celltype, value.var = "Freq")#长数据转为宽数据
+cellper <- dcast(Cellratio,Var2~Celltype, value.var = "Freq")
 rownames(cellper) <- cellper[,1]
 cellper <- cellper[,-1]
 sample <- c("HC1","HC2","MN1","MN2","MN3","MN4","MN5","HC3")
@@ -158,6 +157,7 @@ ggplot(cellper.1, aes(x = celltype, y = percentage, fill = group)) +
   scale_fill_manual(values = c('#6699CC', "#CC3333"))
 
 
+
 ##95%confidence calculation
 median_diff <- function(data, indices) {
   d <- data[indices, ]
@@ -172,7 +172,7 @@ PMN.result <- cellper.1 %>%
     diff_obs <- median(dat$percentage[dat$group == "PMN"]) -
       median(dat$percentage[dat$group == "healthy"])
     boot_res <- boot(dat, statistic = median_diff, R = 1000)
-    ci <- boot.ci(boot_res, type = "perc")$percent[4:5]  # 95% 百分位 CI
+    ci <- boot.ci(boot_res, type = "perc")$percent[4:5] 
     data.frame(
       celltype = unique(dat$celltype),
       median_diff = diff_obs,
@@ -186,7 +186,7 @@ print(PMN.result)
 
 
 
-##Figure S1D: Gene expression heatmap
+##Gene expression heatmap
 marker.plot <- c("CD3E","CD4","CD8A","CD8B","CD79A","NKG7","GNLY","FCN1","FCGR3A","CLEC10A","FCER1A","IRF8","LILRA4","MKI67","PPBP","DEFA4")
 data.features <- FetchData(PMN, cells = colnames(PMN), vars = marker.plot, slot = "data")
 p <- DotPlot(PMN,features = marker.plot)
@@ -295,7 +295,7 @@ for(i in 1:length(celltype)) {
   p <- ggplot(data_rank_plot, aes(x=rank, y=celltype)) + 
     geom_point(size=3, shape=16, color="#1F77B4",alpha =0.4)+
     geom_point(data = data_rank_plot[1:6,],
-               size=3, color='#DC050C')+ #选择前6个标记，自行按照需求选择
+               size=3, color='#DC050C')+
     theme_bw()+
     theme(axis.title = element_text(colour = 'black', size = 20),
           axis.text = element_text(colour = 'black', size = 10),
@@ -373,7 +373,7 @@ View(sig_pairs)
 sub_sig_pairs <- sig_pairs
 dim(sub_sig_pairs)
 selected_pairs = sub_sig_pairs$interacting_pair
-sel_pval = all_pval[match(selected_pairs, intr_pairs), selected_celltype]#将上述需要呈现的受配体选出来
+sel_pval = all_pval[match(selected_pairs, intr_pairs), selected_celltype]
 sel_means = all_means[match(selected_pairs, intr_pairs), selected_celltype]
 View(sel_pval)
 df_names = expand.grid(selected_pairs, selected_celltype)
